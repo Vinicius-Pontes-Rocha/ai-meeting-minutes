@@ -1,0 +1,1750 @@
+{
+  "name": "01-zoom-to-minutes-gemini",
+  "nodes": [
+    {
+      "name": "Todo dia 19h4",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -17328,
+        17856
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 19
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Config4",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -17088,
+        17760
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "zoomUser",
+              "value": "me",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "driveFolderId",
+              "value": "<ID>",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "daysBack",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "a4",
+              "name": "prompt",
+              "value": "Regras:\n- Use somente informações que aparecem na transcrição. Não invente nomes, valores, datas ou decisões.\n- Se alguma informação textual do molde não aparecer na transcrição, escreva \"Não informado\".\n- Corrija erros de transcrição e de português, mas mantenha o sentido do que foi dito.\n- Escreva em linguagem formal, em terceira pessoa e no passado.\n- Resuma as discussões. Não copie as falas literalmente.\n- Se houver tarefas combinadas, liste cada uma com responsável e prazo quando citados.\n- Para Próximas Etapas e Ações Definidas, NÃO crie itens de preenchimento. Liste SOMENTE ações/etapas realmente mencionadas ou claramente combinadas na transcrição. Se não houver nenhuma, retorne [].\n- Nunca use \"Não informado\" como uma etapa ou ação fictícia. \"Não informado\" pode ser usado apenas dentro de um campo de uma etapa/ação real quando aquele campo específico não foi informado.\nMolde da ata: Participantes; Contexto; Estratégico; Objetivo da Reunião; Tópicos Abordados; Estratégico; Tático; Operacional; Decisões Tomadas; Próximas Etapas (Nome, Área/Cargo, Ação Definida, Prazo, Prioridade); Análise - IA; Considerações Finais; Problemas Identificados; Soluções Apresentadas; Ações Definidas (O que será feito, Responsável, Próximo passo, Objetivo).\nGere somente a ATA final, sem explicações. Preserve a estrutura do molde. Use somente informações da transcrição.",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "templateGoogleDocId",
+              "value": "<ID>",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "sharedDriveId",
+              "value": "0AJW7LEhIfbLDUk9PVA",
+              "type": "string"
+            },
+            {
+              "id": "a7",
+              "name": "baseFolderId",
+              "value": "<ID>",
+              "type": "string"
+            },
+            {
+              "id": "a8",
+              "name": "tiFolderName",
+              "value": "TI",
+              "type": "string"
+            },
+            {
+              "id": "a9",
+              "name": "gravFolderName",
+              "value": "Gravações e Transcrições",
+              "type": "string"
+            },
+            {
+              "id": "a10",
+              "name": "destinoVideo",
+              "value": "youtube",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Zoom - listar gravacoes4",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -16848,
+        17760
+      ],
+      "parameters": {
+        "url": "=https://api.zoom.us/v2/users/{{ $('Config4').first().json.zoomUser }}/recordings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zoomOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "from",
+              "value": "={{ $now.minus({days: $('Config4').first().json.daysBack}).toFormat('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "to",
+              "value": "={{ $now.plus({days: 1}).toFormat('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "page_size",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "zoomOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "zoomOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Separar reunioes4",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -16608,
+        17760
+      ],
+      "parameters": {
+        "fieldToSplitOut": "meetings",
+        "options": {}
+      }
+    },
+    {
+      "name": "Preparar reunioes4",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16368,
+        17760
+      ],
+      "parameters": {
+        "jsCode": "const out = [];\n\n// Pastas de reuniões já criadas nas pastas do mês (ex.: \"2026-10-07 15h05-15h48 — Título\")\nconst jaFeitas = ($('Drive - reuniões já processadas').first().json.files || []).map(f => f.name);\n\n// Ordem de preferência da versão do vídeo gravado pelo Zoom\nconst videoPref = ['shared_screen_with_speaker_view', 'shared_screen_with_gallery_view', 'active_speaker', 'speaker_view', 'gallery_view', 'shared_screen'];\n\nconst toLocal = iso => new Date(iso).toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo', hour12: false });\n\nfor (const item of $input.all()) {\n  const m = item.json;\n  const all = m.recording_files || [];\n\n  const files = all.filter(\n    f => f.status === 'completed' && f.file_type === 'TRANSCRIPT'\n  );\n\n  for (const file of files) {\n    const start = file.recording_start || m.start_time;\n    const end = file.recording_end;\n\n    const local = toLocal(start);\n    const date = local.slice(0, 10);\n    const time = local.slice(11, 16).replace(':', 'h');\n    const timeEnd = end ? toLocal(end).slice(11, 16).replace(':', 'h') : '';\n    const hora = timeEnd ? `${time}-${timeEnd}` : time;\n\n    // Já processada em uma execução anterior? Pula.\n    if (jaFeitas.some(n => n.startsWith(`${date} ${time}`))) continue;\n\n    // Vídeo da mesma sessão de gravação da transcrição\n    const videos = all.filter(f => f.status === 'completed' && f.file_type === 'MP4' && f.recording_start === file.recording_start);\n    videos.sort((a, b) => {\n      const ia = videoPref.indexOf(a.recording_type), ib = videoPref.indexOf(b.recording_type);\n      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);\n    });\n    const video = videos[0] || null;\n\n    const topic = (m.topic || 'Reunião')\n      .replace(/[\\\\/:*?\"<>|]/g, '-')\n      .trim();\n\n    out.push({\n      json: {\n        topic,\n        date,\n        time,\n        timeEnd,\n        sessionStart: file.recording_start,\n        sessionEnd: file.recording_end,\n        folderName: `ATA - ${topic} - ${date} - ${hora}`,\n        video: video ? { download_url: video.download_url, file_size: video.file_size, recording_type: video.recording_type } : null,\n        files: [file]\n      }\n    });\n  }\n}\n\nreturn out;"
+      }
+    },
+    {
+      "name": "Drive - criar pasta da reuniao4",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16128,
+        17760
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return { json: { ...$json } };"
+      }
+    },
+    {
+      "name": "Expandir arquivos4",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -15888,
+        17760
+      ],
+      "parameters": {
+        "jsCode": "const meetings = $('Preparar reunioes4').all();\nconst folders = $input.all();\nconst out = [];\nfolders.forEach((f, i) => {\n  const m = meetings[i].json;\n  for (const file of m.files) {\n    out.push({ json: {\n      folderId: f.json.id,\n      folderName: m.folderName,\n      file_type: file.file_type,\n      download_url: file.download_url,\n      videoUrl: m.video ? m.video.download_url : null\n    }});\n  }\n});\nreturn out;"
+      }
+    },
+    {
+      "name": "Zoom - baixar arquivo4",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -15648,
+        17760
+      ],
+      "parameters": {
+        "url": "={{ $json.download_url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zoomOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "zoomOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "zoomOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "VTT para TXT4",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -15408,
+        17760
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item;\nconst meta = $('Expandir arquivos4').item.json;\nconst base = meta.folderName;\nconst buf = await this.helpers.getBinaryDataBuffer($itemIndex, 'data');\nconst vtt = buf.toString('utf8').replace(/\\r/g, '');\nconst out = [];\nlet last = null;\nfor (const raw of vtt.split('\\n')) {\n  const l = raw.trim();\n  if (!l || l === 'WEBVTT' || /^\\d+$/.test(l) || l.includes('-->') || l.startsWith('NOTE')) continue;\n  const m = l.match(/^([^:]{1,60}):\\s(.*)$/);\n  if (m) {\n    if (last === m[1]) out[out.length - 1] += ' ' + m[2];\n    else { out.push(m[1] + ': ' + m[2]); last = m[1]; }\n  } else if (out.length) out[out.length - 1] += ' ' + l;\n  else out.push(l);\n}\nconst text = out.join('\\n\\n');\nconst fileName = `${base} - transcricao.txt`;\nreturn {\n  json: { fileName, folderId: meta.folderId, folderName: base, videoUrl: meta.videoUrl || null, isTranscript: true, text },\n  binary: { data: await this.helpers.prepareBinaryData(Buffer.from(text, 'utf8'), fileName, 'text/plain') }\n};"
+      }
+    },
+    {
+      "name": "E transcricao?4",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -15168,
+        17856
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.isTranscript }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "IA - Gemini - gerar ATA4",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -14928,
+        17808
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  contents:[{\n    parts:[{\n      text:\n        $('Config4').first().json.prompt\n        + '\\n\\nDATA/HORARIO DA SESSAO: ' + $('VTT para TXT4').item.json.folderName\n        + '\\n\\nINSTRUCOES PARA A SAIDA AUTOMATICA:\\n'\n        + 'A resposta deve ser SOMENTE um JSON valido, sem markdown, sem ``` e sem texto antes ou depois.\\n'\n        + 'Use exatamente estas chaves: titulo, assunto, participantes, contexto, objetivo, topicos, estrategico, tatico, operacional, decisoes, proximasEtapas, analiseIA, consideracoes, problemas, solucoes, acoesDefinidas.\\n'\n        + 'participantes, topicos, estrategico, tatico, operacional, decisoes, problemas e solucoes devem ser arrays de strings.\\n'\n        + 'proximasEtapas deve ser um array de objetos com: nome, area, acao, prazo, prioridade. Inclua TODAS as etapas reais mencionadas ou combinadas na transcricao (uma por objeto). Se nao houver etapas reais, retorne []. Nao crie itens ficticios.\\n'\n        + 'acoesDefinidas deve ser um array de objetos com: oQueSeraFeito, responsavel, proximoPasso, objetivo. Inclua TODAS as acoes reais da transcricao (uma por objeto). Se nao houver acoes reais, retorne []. Nao crie acoes ficticias.\\n'\n        + 'Dentro de cada etapa/acao, use \"Não informado\" apenas no campo especifico que nao foi dito.\\n'\n        + 'titulo deve ser curto e natural, baseado no conteudo real da reuniao, e NAO deve repetir o nome generico do Zoom.\\n'\n        + 'assunto deve descrever o tema principal real em uma frase.\\n'\n        + 'Nao invente nada. Quando nao houver informacao, use \"Não informado\".\\n'\n        + '\\nTRANSCRICAO COMPLETA:\\n'\n        + $('VTT para TXT4').item.json.text\n    }]\n  }],\n  generationConfig:{responseMimeType:'application/json'}\n}) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "httpHeaderAuth"
+        }
+      }
+    },
+    {
+      "name": "Preparar ATA para Google Docs3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -14656,
+        17808
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const r = $json;\nconst raw = r?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';\n\nif (!raw.trim()) {\n  throw new Error('Gemini não retornou a ATA.');\n}\n\nlet data;\ntry {\n  data = JSON.parse(raw);\n} catch (e) {\n  const cleaned = raw\n    .replace(/^```json\\s*/i,'')\n    .replace(/^```\\s*/i,'')\n    .replace(/```$/,'')\n    .trim();\n  try {\n    data = JSON.parse(cleaned);\n  } catch {\n    throw new Error('Gemini não retornou JSON válido: ' + raw.slice(0,500));\n  }\n}\n\nconst meta = $('VTT para TXT4').item.json;\n\nconst title = String(data.titulo || 'Reunião')\n  .replace(/[\\\\/:*?\"<>|]/g,'-')\n  .replace(/\\s+/g,' ')\n  .trim();\n\nconst assunto = String(data.assunto || 'Não informado').trim();\n\n// folderName do Zoom: \"ATA - tópico - 2026-10-07 - 15h05-15h48\"\nconst m = String(meta.folderName || '').match(/(\\d{4}-\\d{2}-\\d{2}) - (\\d{2}h\\d{2})(?:-(\\d{2}h\\d{2}))?/);\nconst date = m ? m[1] : '';\nconst time = m ? m[2] : '';\nconst timeEnd = m && m[3] ? m[3] : '';\nconst hora = timeEnd ? `${time}-${timeEnd}` : time;\n\n// Pasta do mês: Meus Documentos / AAAA / TI / Gravações e Transcrições / MM\nconst mesKeys = $('Meses a garantir').all().map(i => i.json.key);\nconst mesIds = $('Drive - garantir pasta do mês').all().map(i => i.json.id);\nconst monthFolderId = mesIds[mesKeys.indexOf(date.slice(0, 7))];\nif (!monthFolderId) throw new Error(`Pasta do mês não encontrada para a reunião de ${date}`);\n\n// Ex.: \"2026-10-07 15h05-15h48 — Fechamento fiscal\"\nconst folderName = `${date} ${hora} — ${title}`.replace(/\\s+/g,' ').trim();\nconst docName = folderName;\nconst docxName = `${folderName}.docx`;\n\nconst clean = v => String(v ?? '').replace(/\\s*\\n\\s*/g,' ').trim();\n\nconst arr = v => Array.isArray(v)\n  ? v.map(x => clean(x)).filter(Boolean)\n  : [];\n\nconst textOrNI = v => clean(v) || 'Não informado';\nconst list = (v, fmt) => (arr(v).length ? arr(v) : ['Não informado']).map(fmt).join('\\n');\n\nconst participantes = list(data.participantes, x => x);\nconst topicos = list(data.topicos, (x,i) => `${i+1}. ${x}`);\nconst estrategico = list(data.estrategico, x => `• ${x}`);\nconst tatico = list(data.tatico, x => `• ${x}`);\nconst operacional = list(data.operacional, x => `• ${x}`);\nconst decisoes = list(data.decisoes, x => `• ${x}`);\nconst problemas = list(data.problemas, x => `• ${x}`);\nconst solucoes = list(data.solucoes, x => `• ${x}`);\n\n// Linhas das tabelas: uma linha por item real (as tabelas crescem no Docs conforme a quantidade).\nconst isObj = x => x && typeof x === 'object';\nconst etapas = (Array.isArray(data.proximasEtapas) ? data.proximasEtapas : [])\n  .filter(isObj)\n  .map(e => [textOrNI(e.nome), textOrNI(e.area), textOrNI(e.acao), textOrNI(e.prazo), textOrNI(e.prioridade)])\n  .filter(row => row.some(c => c !== 'Não informado'));\n\nconst acoes = (Array.isArray(data.acoesDefinidas) ? data.acoesDefinidas : [])\n  .filter(isObj)\n  .map(a => [textOrNI(a.oQueSeraFeito), textOrNI(a.responsavel), textOrNI(a.proximoPasso), textOrNI(a.objetivo)])\n  .filter(row => row.some(c => c !== 'Não informado'));\n\nconst dataBR = date ? date.split('-').reverse().join('/') : 'Não informado';\n\nconst replace = {\n  TITULO: title,\n  ASSUNTO: assunto,\n  YOUTUBE_LINK: 'Não disponível',\n  DATA: timeEnd ? `${dataBR} (${time} às ${timeEnd})` : dataBR,\n  PARTICIPANTES: participantes,\n  CONTEXTO: textOrNI(data.contexto),\n  OBJETIVO: textOrNI(data.objetivo),\n  TOPICOS: topicos,\n  ESTRATEGICO: estrategico,\n  TATICO: tatico,\n  OPERACIONAL: operacional,\n  DECISOES: decisoes,\n  ANALISE_IA: textOrNI(data.analiseIA),\n  CONSIDERACOES: textOrNI(data.consideracoes),\n  PROBLEMAS: problemas,\n  SOLUCOES: solucoes\n};\n\nreturn {\n  json: {\n    ...meta,\n    title,\n    assunto,\n    folderName,\n    docName,\n    docxName,\n    monthFolderId,\n    templateGoogleDocId: $('Config4').first().json.templateGoogleDocId,\n    replacements: replace,\n    etapas,\n    acoes,\n    videoUrl: meta.videoUrl || null,\n    videoName: `${folderName}.mp4`,\n    transcriptText: meta.text,\n    transcriptFileName: `Transcrição - ${date} ${hora}.txt`,\n    etapaCount: etapas.length,\n    acaoCount: acoes.length\n  }\n};"
+      }
+    },
+    {
+      "name": "Drive - criar pasta com titulo do Gemini5",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -12304,
+        17472
+      ],
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $json.folderName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DRIVEID>"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FOLDERID>"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Google Drive - copiar modelo da ATA3",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -11024,
+        17280
+      ],
+      "parameters": {
+        "operation": "copy",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FILEID>"
+        },
+        "name": "={{ $('Preparar ATA para Google Docs3').item.json.docName }}",
+        "sameFolder": false,
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DRIVEID>"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FOLDERID>"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Preparar atualizações Google Docs3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10000,
+        17280
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Preenche as células das tabelas, coloca o link da transcrição e troca os {{PLACEHOLDERS}} do modelo.\nconst ata = $('Preparar ATA para Google Docs3').item.json;\nconst content = $json.body.content;\nconst pText = p => (p.paragraph?.elements || []).map(x => x.textRun?.content || '').join('');\nconst head = e => e.table ? e.table.tableRows[0].tableCells[0].content.map(pText).join('').trim() : null;\n\n// Link da transcrição (.txt na pasta da reunião, com link aberto). Se falhou, usa o vídeo como antes.\nlet link = null;\nlet linkTexto = 'Abrir a transcrição da reunião';\nlet rotulo = 'Transcrição';\ntry {\n  const id = $('Drive - salvar transcricao na pasta correta5').item.json.id;\n  if (id) link = `<GOOGLE_URL>`;\n} catch (e) {}\nif (!link) {\n  linkTexto = 'Assistir à gravação da reunião';\n  rotulo = 'Gravação';\n  try {\n    const yt = $('YouTube - publicar vídeo (não listado)').item.json.uploadId;\n    if (yt) { link = `https://youtu.be/${yt}`; rotulo = 'Gravação (YouTube)'; }\n  } catch (e) {}\n  if (!link) {\n    try {\n      const id = $('Drive - salvar vídeo').item.json.id;\n      if (id) link = `<GOOGLE_URL>`;\n    } catch (e) {}\n  }\n}\n\nconst tabelas = {\n  'Nome': { rows: ata.etapas, vazio: 'Nenhuma próxima etapa foi definida na reunião.' },\n  'O que será feito': { rows: ata.acoes, vazio: 'Nenhuma ação foi definida na reunião.' }\n};\n\nconst ins = [];\nfor (const el of content) {\n  const t = tabelas[head(el)];\n  if (!t) continue;\n  const tr = el.table.tableRows;\n  if (!t.rows.length) {\n    ins.push({ index: tr[1].tableCells[0].content[0].startIndex, text: t.vazio, italic: true });\n    continue;\n  }\n  t.rows.forEach((vals, i) => {\n    const row = tr[i + 1];\n    if (!row) return;\n    vals.forEach((v, c) => {\n      const cell = row.tableCells[c];\n      if (cell) ins.push({ index: cell.content[0].startIndex, text: String(v) });\n    });\n  });\n}\n\n// Troca {{YOUTUBE_LINK}} por um link clicável\nconst PH = '{{YOUTUBE_LINK}}';\nconst walk = (els, fn) => {\n  for (const el of els || []) {\n    if (el.paragraph) for (const pe of el.paragraph.elements || []) fn(pe);\n    if (el.table) for (const r of el.table.tableRows) for (const c of r.tableCells) walk(c.content, fn);\n  }\n};\nif (link) {\n  walk(content, pe => {\n    const txt = pe.textRun?.content || '';\n    let k = txt.indexOf(PH);\n    while (k >= 0) {\n      ins.push({ index: pe.startIndex + k, text: linkTexto, link, removeLen: PH.length });\n      k = txt.indexOf(PH, k + 1);\n    }\n  });\n}\n\n// De trás pra frente, para os índices não mudarem\nins.sort((a, b) => b.index - a.index);\nconst GRAY = { color: { rgbColor: { red: 0.13333334, green: 0.13333334, blue: 0.13333334 } } };\nconst BLUE = { color: { rgbColor: { red: 0.06666667, green: 0.33333334, blue: 0.8 } } };\nconst requests = [];\nfor (const x of ins) {\n  const range = { startIndex: x.index, endIndex: x.index + x.text.length };\n  if (x.link) {\n    requests.push({ deleteContentRange: { range: { startIndex: x.index, endIndex: x.index + x.removeLen } } });\n    requests.push({ insertText: { location: { index: x.index }, text: x.text } });\n    requests.push({ updateTextStyle: {\n      range,\n      textStyle: { link: { url: x.link }, underline: true, bold: false, foregroundColor: BLUE, fontSize: { magnitude: 9, unit: 'PT' }, weightedFontFamily: { fontFamily: 'Arial' } },\n      fields: 'link,underline,bold,foregroundColor,fontSize,weightedFontFamily'\n    } });\n    continue;\n  }\n  requests.push({ insertText: { location: { index: x.index }, text: x.text } });\n  requests.push({ updateTextStyle: {\n    range,\n    textStyle: { bold: false, italic: !!x.italic, fontSize: { magnitude: 8, unit: 'PT' }, foregroundColor: GRAY, weightedFontFamily: { fontFamily: 'Arial' } },\n    fields: 'bold,italic,fontSize,foregroundColor,weightedFontFamily'\n  } });\n}\n\nconst repl = { ...(ata.replacements || {}) };\nif (link) delete repl.YOUTUBE_LINK;\nfor (const [key, value] of Object.entries(repl)) {\n  requests.push({ replaceAllText: { containsText: { text: `{{${key}}}`, matchCase: true }, replaceText: String(value ?? '') } });\n}\n// Rótulo da linha do link: \"Transcrição\" (ou \"Gravação\" se a transcrição falhou)\nif (rotulo !== 'Gravação (YouTube)') {\n  requests.push({ replaceAllText: { containsText: { text: 'Gravação (YouTube)', matchCase: true }, replaceText: rotulo } });\n}\n\nreturn { json: { documentId: $json.documentId, requests } };"
+      }
+    },
+    {
+      "name": "Google Docs API - preencher ATA3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -9744,
+        17280
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://docs.googleapis.com/v1/documents/{{ $('Google Drive - copiar modelo da ATA3').item.json.id }}:batchUpdate",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDocsOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ requests: $json.requests }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDocsOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Google Drive - baixar ATA em DOCX3",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -9488,
+        17280
+      ],
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FILEID>"
+        },
+        "options": {
+          "binaryPropertyName": "data",
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            }
+          },
+          "fileName": "={{ $('Preparar ATA para Google Docs3').item.json.docxName }}"
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive - salvar ATA DOCX3",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -9232,
+        17280
+      ],
+      "parameters": {
+        "name": "={{ $('Preparar ATA para Google Docs3').item.json.docxName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DRIVEID>"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FOLDERID>"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Preparar transcrição para salvar5",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -12048,
+        17632
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const x=$('Preparar ATA para Google Docs3').item.json; return {json:{folderId:$json.id,fileName:x.transcriptFileName},binary:{data:await this.helpers.prepareBinaryData(Buffer.from(x.transcriptText||'','utf8'),x.transcriptFileName,'text/plain')}};"
+      }
+    },
+    {
+      "name": "Drive - salvar transcricao na pasta correta5",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -11808,
+        17632
+      ],
+      "parameters": {
+        "name": "={{ $json.fileName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DRIVEID>"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FOLDERID>"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "LEIA - Configuração corrigida",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -14368,
+        18096
+      ],
+      "parameters": {
+        "content": "### CONFIGURAÇÃO\n\n- `driveFolderId` = pasta onde o workflow cria as pastas das reuniões.\n- `templateGoogleDocId` = ID do modelo Google Docs da ATA.\n- Nome da pasta/doc: `AAAA-MM-DD HHhMM — título`.\n- Placeholders de texto: `{{TITULO}}`, `{{DATA}}`, `{{ASSUNTO}}`, `{{YOUTUBE_LINK}}`, `{{PARTICIPANTES}}`, etc.\n- Tabelas **Próximas Etapas** (1ª célula \"Nome\") e **Ações Definidas** (1ª célula \"O que será feito\") têm só 1 linha em branco no modelo; o workflow cria uma linha por item real. Sem itens, mostra \"Nenhuma ... foi definida\".\n- Não renomear o cabeçalho dessas tabelas (o workflow as encontra por ele).",
+        "height": 300,
+        "width": 500,
+        "color": 5
+      }
+    },
+    {
+      "name": "Docs - ler copia da ATA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -11024,
+        17280
+      ],
+      "parameters": {
+        "url": "=https://docs.googleapis.com/v1/documents/{{ $('Google Drive - copiar modelo da ATA3').item.json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDocsOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDocsOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Montar linhas das tabelas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10768,
+        17280
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Cria nas tabelas do Docs uma linha para cada etapa/ação real.\n// Sem itens: junta as células da linha para mostrar uma mensagem.\nconst ata = $('Preparar ATA para Google Docs3').item.json;\nconst content = $json.body.content;\nconst pText = p => (p.paragraph?.elements || []).map(x => x.textRun?.content || '').join('');\nconst head = e => e.table ? e.table.tableRows[0].tableCells[0].content.map(pText).join('').trim() : null;\n\nconst specs = [\n  { el: content.find(e => head(e) === 'Nome'), n: ata.etapas.length },\n  { el: content.find(e => head(e) === 'O que será feito'), n: ata.acoes.length }\n].filter(s => s.el).sort((a, b) => b.el.startIndex - a.el.startIndex);\n\nconst requests = [];\nfor (const s of specs) {\n  const loc = { tableStartLocation: { index: s.el.startIndex }, rowIndex: 1, columnIndex: 0 };\n  if (s.n === 0) {\n    requests.push({ mergeTableCells: { tableRange: { tableCellLocation: loc, rowSpan: 1, columnSpan: s.el.table.columns } } });\n  }\n  for (let i = 1; i < s.n; i++) {\n    requests.push({ insertTableRow: { tableCellLocation: loc, insertBelow: true } });\n  }\n}\n\n// A API não aceita lista vazia\nif (!requests.length) {\n  requests.push({ replaceAllText: { containsText: { text: '{{__NADA__}}', matchCase: true }, replaceText: '' } });\n}\n\nreturn { json: { documentId: $json.documentId, requests } };"
+      }
+    },
+    {
+      "name": "Docs - criar linhas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -10512,
+        17280
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://docs.googleapis.com/v1/documents/{{ $('Google Drive - copiar modelo da ATA3').item.json.id }}:batchUpdate",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDocsOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ requests: $json.requests }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDocsOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Docs - ler copia com linhas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -10256,
+        17280
+      ],
+      "parameters": {
+        "url": "=https://docs.googleapis.com/v1/documents/{{ $('Google Drive - copiar modelo da ATA3').item.json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDocsOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDocsOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive - listar estrutura de pastas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -17088,
+        17504
+      ],
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ (() => { const c = $('Config4').first().json; const names = new Set([c.tiFolderName, c.gravFolderName]); for (let i = c.daysBack; i >= 0; i--) { const d = $now.setZone('America/Sao_Paulo').minus({ days: i }); names.add(d.toFormat('yyyy')); names.add(d.toFormat('MM')); names.add('0' + d.toFormat('MM')); } return \"mimeType='application/vnd.google-apps.folder' and trashed=false and (\" + [...names].map(n => \"name='\" + n.replace(/'/g, \"\\\\'\") + \"'\").join(' or ') + ')'; })() }}"
+            },
+            {
+              "name": "corpora",
+              "value": "drive"
+            },
+            {
+              "name": "driveId",
+              "value": "={{ $('Config4').first().json.sharedDriveId }}"
+            },
+            {
+              "name": "includeItemsFromAllDrives",
+              "value": "true"
+            },
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name,parents)"
+            },
+            {
+              "name": "pageSize",
+              "value": "1000"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Resolver pastas do mês",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16848,
+        17504
+      ],
+      "parameters": {
+        "jsCode": "// Caminho: Meus Documentos / AAAA / TI / Gravações e Transcrições / MM\n// Descobre quais pastas já existem (id) e quais precisam ser criadas (id = null).\nconst cfg = $('Config4').first().json;\nconst folders = $json.files || [];\nconst norm = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();\nconst child = (parentId, name) => parentId\n  ? folders.find(f => (f.parents || []).includes(parentId) && norm(f.name) === norm(name))\n  : null;\n\n// Meses do período buscado no Zoom (ontem e hoje)\nconst byYear = {};\nfor (let i = cfg.daysBack; i >= 0; i--) {\n  const d = $now.setZone('America/Sao_Paulo').minus({ days: i });\n  (byYear[d.toFormat('yyyy')] ||= new Set()).add(d.toFormat('MM'));\n}\n\nreturn Object.entries(byYear).map(([year, months]) => {\n  const y = child(cfg.baseFolderId, year);\n  const ti = child(y?.id, cfg.tiFolderName);\n  const gr = child(ti?.id, cfg.gravFolderName);\n  return { json: {\n    year,\n    yearId: y?.id || null,\n    tiId: ti?.id || null,\n    gravId: gr?.id || null,\n    months: [...months].map(mm => ({\n      key: `${year}-${mm}`,\n      name: mm,\n      id: (child(gr?.id, mm) || child(gr?.id, '0' + mm))?.id || null\n    }))\n  } };\n});"
+      }
+    },
+    {
+      "name": "Drive - garantir pasta do ano",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -16608,
+        17504
+      ],
+      "parameters": {
+        "method": "={{ $json.yearId ? 'PATCH' : 'POST' }}",
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files' + ($json.yearId ? '/' + $json.yearId : '') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.yearId ? {} : { name: $json.year, mimeType: 'application/vnd.google-apps.folder', parents: [ $('Config4').first().json.baseFolderId ] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive - garantir pasta TI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -16368,
+        17504
+      ],
+      "parameters": {
+        "method": "={{ $('Resolver pastas do mês').item.json.tiId ? 'PATCH' : 'POST' }}",
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files' + ($('Resolver pastas do mês').item.json.tiId ? '/' + $('Resolver pastas do mês').item.json.tiId : '') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Resolver pastas do mês').item.json.tiId ? {} : { name: $('Config4').first().json.tiFolderName, mimeType: 'application/vnd.google-apps.folder', parents: [ $json.id ] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive - garantir pasta Gravações",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -16128,
+        17504
+      ],
+      "parameters": {
+        "method": "={{ $('Resolver pastas do mês').item.json.gravId ? 'PATCH' : 'POST' }}",
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files' + ($('Resolver pastas do mês').item.json.gravId ? '/' + $('Resolver pastas do mês').item.json.gravId : '') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Resolver pastas do mês').item.json.gravId ? {} : { name: $('Config4').first().json.gravFolderName, mimeType: 'application/vnd.google-apps.folder', parents: [ $json.id ] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Meses a garantir",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -15888,
+        17504
+      ],
+      "parameters": {
+        "jsCode": "const anos = $('Resolver pastas do mês').all();\nconst out = [];\n$input.all().forEach((it, i) => {\n  for (const m of anos[i].json.months) {\n    out.push({ json: { ...m, parentId: it.json.id }, pairedItem: { item: i } });\n  }\n});\nreturn out;"
+      }
+    },
+    {
+      "name": "Drive - garantir pasta do mês",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -15648,
+        17504
+      ],
+      "parameters": {
+        "method": "={{ $json.id ? 'PATCH' : 'POST' }}",
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files' + ($json.id ? '/' + $json.id : '') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.id ? {} : { name: $json.name, mimeType: 'application/vnd.google-apps.folder', parents: [ $json.parentId ] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Tem vídeo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -12048,
+        17280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "v1",
+              "leftValue": "={{ $('Preparar ATA para Google Docs3').item.json.videoUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Zoom - baixar vídeo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -11792,
+        17184
+      ],
+      "parameters": {
+        "url": "={{ $('Preparar ATA para Google Docs3').item.json.videoUrl }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zoomOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 900000
+        }
+      },
+      "credentials": {
+        "zoomOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "zoomOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive - salvar vídeo",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -11280,
+        17280
+      ],
+      "parameters": {
+        "name": "={{ $('Preparar ATA para Google Docs3').item.json.videoName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DRIVEID>"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FOLDERID>"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Destino: YouTube?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -11536,
+        17184
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d1",
+              "leftValue": "={{ $('Config4').first().json.destinoVideo }}",
+              "rightValue": "youtube",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "YouTube - publicar vídeo (não listado)",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        -11280,
+        17056
+      ],
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('Preparar ATA para Google Docs3').item.json.folderName.replace(/[<>]/g, '').slice(0, 100) }}",
+        "regionCode": "BR",
+        "categoryId": "22",
+        "options": {
+          "defaultLanguage": "pt",
+          "description": "={{ 'Gravação da reunião de ' + $('Preparar ATA para Google Docs3').item.json.replacements.DATA + '.\\n\\nAssunto: ' + $('Preparar ATA para Google Docs3').item.json.assunto }}",
+          "embeddable": false,
+          "notifySubscribers": false,
+          "privacyStatus": "private",
+          "selfDeclaredMadeForKids": false
+        }
+      },
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "youTubeOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive - reuniões já processadas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -15408,
+        17504
+      ],
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ \"mimeType='application/vnd.google-apps.folder' and trashed=false and (\" + $('Drive - garantir pasta do mês').all().map(i => \"'\" + i.json.id + \"' in parents\").join(' or ') + ')' }}"
+            },
+            {
+              "name": "corpora",
+              "value": "drive"
+            },
+            {
+              "name": "driveId",
+              "value": "={{ $('Config4').first().json.sharedDriveId }}"
+            },
+            {
+              "name": "includeItemsFromAllDrives",
+              "value": "true"
+            },
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            },
+            {
+              "name": "fields",
+              "value": "files(name)"
+            },
+            {
+              "name": "pageSize",
+              "value": "1000"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Google Chat - avisar ATA concluída",
+      "type": "n8n-nodes-base.googleChat",
+      "typeVersion": 1,
+      "position": [
+        -8976,
+        17280
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "messageUi": {
+          "text": "={{ (() => { const a = $('Preparar ATA para Google Docs3').item.json; const pasta = $('Drive - criar pasta com titulo do Gemini5').item.json.id; return '✅ *ATA da reunião concluída*\\n*' + a.folderName + '*\\nAssunto: ' + a.assunto + '\\n📁 <<GOOGLE_URL>' + pasta + '|Consultar a pasta da reunião>'; })() }}"
+        },
+        "additionalFields": {},
+        "spaceId": "spaces/<SPACE_ID>"
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Zoom - baixar vídeo (reserva)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -11024,
+        16880
+      ],
+      "parameters": {
+        "url": "={{ $('Preparar ATA para Google Docs3').item.json.videoUrl }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zoomOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 900000
+        }
+      },
+      "credentials": {
+        "zoomOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "zoomOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive pessoal - salvar vídeo (reserva)",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -10780,
+        16880
+      ],
+      "parameters": {
+        "name": "={{ $('Preparar ATA para Google Docs3').item.json.videoName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DRIVEID>"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FOLDERID>"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Gravações para apagar do Zoom",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8720,
+        17280
+      ],
+      "parameters": {
+        "jsCode": "// Manda para a lixeira do Zoom só as gravações cujas sessões (transcrições) JÁ têm ATA no Drive.\n// Se alguma sessão da gravação ainda não tem ATA, a gravação fica no Zoom para tentar de novo.\nconst meetings = $('Zoom - listar gravacoes4').first().json.meetings || [];\nconst jaFeitas = ($('Drive - reuniões já processadas').first().json.files || []).map(f => f.name);\nconst feitasAgora = $('Preparar ATA para Google Docs3').all().map(i => i.json.folderName);\nconst nomes = [...jaFeitas, ...feitasAgora];\nconst toLocal = iso => new Date(iso).toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo', hour12: false });\n\nconst out = [];\nfor (const m of meetings) {\n  const trans = (m.recording_files || []).filter(f => f.file_type === 'TRANSCRIPT' && f.status === 'completed');\n  if (!trans.length) continue;\n  const todas = trans.every(f => {\n    const l = toLocal(f.recording_start || m.start_time);\n    const chave = `${l.slice(0, 10)} ${l.slice(11, 16).replace(':', 'h')}`;\n    return nomes.some(n => n.startsWith(chave));\n  });\n  if (!todas) continue;\n  const uuidPath = (m.uuid.startsWith('/') || m.uuid.includes('//'))\n    ? encodeURIComponent(encodeURIComponent(m.uuid))\n    : encodeURIComponent(m.uuid);\n  out.push({ json: { uuid: m.uuid, uuidPath, topic: m.topic, inicio: toLocal(m.start_time) } });\n}\nreturn out;"
+      }
+    },
+    {
+      "name": "Zoom - mover gravação para lixeira",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8480,
+        17280
+      ],
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.zoom.us/v2/meetings/{{ $json.uuidPath }}/recordings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zoomOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "action",
+              "value": "trash"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "zoomOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "zoomOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive - liberar link da transcrição",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -11568,
+        17632
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + $('Drive - salvar transcricao na pasta correta5').item.json.id + '/permissions' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"role\":\"reader\",\"type\":\"anyone\"}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Zezinho - feedback da reunião",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -8976,
+        17520
+      ],
+      "parameters": {
+        "mode": "each",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "titulo": "={{ $('Preparar ATA para Google Docs3').item.json.folderName }}",
+            "assunto": "={{ $('Preparar ATA para Google Docs3').item.json.assunto }}",
+            "pasta_id": "={{ $('Drive - criar pasta com titulo do Gemini5').item.json.id }}",
+            "ata": "={{ JSON.stringify({ ...$('Preparar ATA para Google Docs3').item.json.replacements, proximasEtapas: $('Preparar ATA para Google Docs3').item.json.etapas, acoesDefinidas: $('Preparar ATA para Google Docs3').item.json.acoes }) }}",
+            "transcricao": "={{ $('Preparar ATA para Google Docs3').item.json.transcriptText }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "titulo",
+              "displayName": "titulo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "assunto",
+              "displayName": "assunto",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pasta_id",
+              "displayName": "pasta_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ata",
+              "displayName": "ata",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "transcricao",
+              "displayName": "transcricao",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Todo dia 19h4": {
+      "main": [
+        [
+          {
+            "node": "Config4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoom - listar gravacoes4": {
+      "main": [
+        [
+          {
+            "node": "Separar reunioes4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar reunioes4": {
+      "main": [
+        [
+          {
+            "node": "Preparar reunioes4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar reunioes4": {
+      "main": [
+        [
+          {
+            "node": "Drive - criar pasta da reuniao4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - criar pasta da reuniao4": {
+      "main": [
+        [
+          {
+            "node": "Expandir arquivos4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expandir arquivos4": {
+      "main": [
+        [
+          {
+            "node": "Zoom - baixar arquivo4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoom - baixar arquivo4": {
+      "main": [
+        [
+          {
+            "node": "VTT para TXT4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VTT para TXT4": {
+      "main": [
+        [
+          {
+            "node": "E transcricao?4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E transcricao?4": {
+      "main": [
+        [
+          {
+            "node": "IA - Gemini - gerar ATA4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA - Gemini - gerar ATA4": {
+      "main": [
+        [
+          {
+            "node": "Preparar ATA para Google Docs3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar ATA para Google Docs3": {
+      "main": [
+        [
+          {
+            "node": "Drive - criar pasta com titulo do Gemini5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - criar pasta com titulo do Gemini5": {
+      "main": [
+        [
+          {
+            "node": "Preparar transcrição para salvar5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar atualizações Google Docs3": {
+      "main": [
+        [
+          {
+            "node": "Google Docs API - preencher ATA3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Docs API - preencher ATA3": {
+      "main": [
+        [
+          {
+            "node": "Google Drive - baixar ATA em DOCX3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Drive - baixar ATA em DOCX3": {
+      "main": [
+        [
+          {
+            "node": "Drive - salvar ATA DOCX3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar transcrição para salvar5": {
+      "main": [
+        [
+          {
+            "node": "Drive - salvar transcricao na pasta correta5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Drive - copiar modelo da ATA3": {
+      "main": [
+        [
+          {
+            "node": "Docs - ler copia da ATA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Docs - ler copia da ATA": {
+      "main": [
+        [
+          {
+            "node": "Montar linhas das tabelas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar linhas das tabelas": {
+      "main": [
+        [
+          {
+            "node": "Docs - criar linhas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Docs - criar linhas": {
+      "main": [
+        [
+          {
+            "node": "Docs - ler copia com linhas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Docs - ler copia com linhas": {
+      "main": [
+        [
+          {
+            "node": "Preparar atualizações Google Docs3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config4": {
+      "main": [
+        [
+          {
+            "node": "Drive - listar estrutura de pastas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - listar estrutura de pastas": {
+      "main": [
+        [
+          {
+            "node": "Resolver pastas do mês",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolver pastas do mês": {
+      "main": [
+        [
+          {
+            "node": "Drive - garantir pasta do ano",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - garantir pasta do ano": {
+      "main": [
+        [
+          {
+            "node": "Drive - garantir pasta TI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - garantir pasta TI": {
+      "main": [
+        [
+          {
+            "node": "Drive - garantir pasta Gravações",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - garantir pasta Gravações": {
+      "main": [
+        [
+          {
+            "node": "Meses a garantir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meses a garantir": {
+      "main": [
+        [
+          {
+            "node": "Drive - garantir pasta do mês",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem vídeo?": {
+      "main": [
+        [
+          {
+            "node": "Zoom - baixar vídeo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Drive - copiar modelo da ATA3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - salvar vídeo": {
+      "main": [
+        [
+          {
+            "node": "Google Drive - copiar modelo da ATA3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoom - baixar vídeo": {
+      "main": [
+        [
+          {
+            "node": "Destino: YouTube?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Destino: YouTube?": {
+      "main": [
+        [
+          {
+            "node": "YouTube - publicar vídeo (não listado)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drive - salvar vídeo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube - publicar vídeo (não listado)": {
+      "main": [
+        [
+          {
+            "node": "Google Drive - copiar modelo da ATA3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zoom - baixar vídeo (reserva)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - garantir pasta do mês": {
+      "main": [
+        [
+          {
+            "node": "Drive - reuniões já processadas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - reuniões já processadas": {
+      "main": [
+        [
+          {
+            "node": "Zoom - listar gravacoes4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - salvar ATA DOCX3": {
+      "main": [
+        [
+          {
+            "node": "Google Chat - avisar ATA concluída",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Zezinho - feedback da reunião",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoom - baixar vídeo (reserva)": {
+      "main": [
+        [
+          {
+            "node": "Drive pessoal - salvar vídeo (reserva)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive pessoal - salvar vídeo (reserva)": {
+      "main": [
+        [
+          {
+            "node": "Google Drive - copiar modelo da ATA3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Chat - avisar ATA concluída": {
+      "main": [
+        [
+          {
+            "node": "Gravações para apagar do Zoom",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gravações para apagar do Zoom": {
+      "main": [
+        [
+          {
+            "node": "Zoom - mover gravação para lixeira",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - liberar link da transcrição": {
+      "main": [
+        [
+          {
+            "node": "Tem vídeo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - salvar transcricao na pasta correta5": {
+      "main": [
+        [
+          {
+            "node": "Drive - liberar link da transcrição",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

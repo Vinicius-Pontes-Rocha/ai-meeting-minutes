@@ -1,0 +1,318 @@
+{
+  "name": "03-recordings-to-youtube-private",
+  "nodes": [
+    {
+      "name": "Executar manualmente",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "name": "Drive pessoal - próximo vídeo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        100
+      ],
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "'<ID>' in parents and trashed=false and mimeType='video/mp4'"
+            },
+            {
+              "name": "orderBy",
+              "value": "name"
+            },
+            {
+              "name": "pageSize",
+              "value": "1"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name,size)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "3x por dia (10h, 13h, 16h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10,13,16 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Tem vídeo para migrar?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Um vídeo por execução (cota do YouTube). Sem vídeos: para aqui.\nconst f = ($json.files || [])[0];\nif (!f) return [];\nreturn [{ json: { id: f.id, nome: f.name.replace(/\\.mp4$/i, ''), tamanhoMB: Math.round(Number(f.size || 0) / 1048576) } }];"
+      }
+    },
+    {
+      "name": "Drive pessoal - baixar vídeo",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        720,
+        100
+      ],
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FILEID>"
+        },
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "YouTube - enviar como privado",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        960,
+        100
+      ],
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('Tem vídeo para migrar?').item.json.nome.replace(/[<>]/g, '').slice(0, 100) }}",
+        "regionCode": "BR",
+        "categoryId": "22",
+        "options": {
+          "defaultLanguage": "pt",
+          "description": "={{ 'Gravação da reunião ' + $('Tem vídeo para migrar?').item.json.nome }}",
+          "embeddable": false,
+          "notifySubscribers": false,
+          "privacyStatus": "private",
+          "selfDeclaredMadeForKids": false
+        }
+      },
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "youTubeOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive pessoal - mover vídeo para lixeira",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        100
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Tem vídeo para migrar?').item.json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"trashed\": true}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Registrar migração",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1440,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "nome": "={{ $('Tem vídeo para migrar?').item.json.nome }}",
+            "driveFileId": "={{ $('Tem vídeo para migrar?').item.json.id }}",
+            "youtubeId": "={{ $('YouTube - enviar como privado').item.json.uploadId || $('YouTube - enviar como privado').item.json.id }}",
+            "tamanhoMB": "={{ $('Tem vídeo para migrar?').item.json.tamanhoMB }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "nome",
+              "displayName": "nome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "driveFileId",
+              "displayName": "driveFileId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "youtubeId",
+              "displayName": "youtubeId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tamanhoMB",
+              "displayName": "tamanhoMB",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Executar manualmente": {
+      "main": [
+        [
+          {
+            "node": "Drive pessoal - próximo vídeo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive pessoal - próximo vídeo": {
+      "main": [
+        [
+          {
+            "node": "Tem vídeo para migrar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem vídeo para migrar?": {
+      "main": [
+        [
+          {
+            "node": "Drive pessoal - baixar vídeo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive pessoal - baixar vídeo": {
+      "main": [
+        [
+          {
+            "node": "YouTube - enviar como privado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube - enviar como privado": {
+      "main": [
+        [
+          {
+            "node": "Drive pessoal - mover vídeo para lixeira",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive pessoal - mover vídeo para lixeira": {
+      "main": [
+        [
+          {
+            "node": "Registrar migração",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3x por dia (10h, 13h, 16h)": {
+      "main": [
+        [
+          {
+            "node": "Drive pessoal - próximo vídeo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

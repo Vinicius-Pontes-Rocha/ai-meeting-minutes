@@ -1,0 +1,320 @@
+{
+  "name": "02-esignature-webhook-filing",
+  "nodes": [
+    {
+      "name": "Autentique - aviso de documento",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        304
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "autentique-assinatura",
+        "options": {}
+      }
+    },
+    {
+      "name": "Ler aviso (só documento finalizado)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ],
+      "parameters": {
+        "jsCode": "// Só segue quando TODOS assinaram (document.finished).\n// Sem token da API: o nome vem do aviso e o PDF assinado é baixado pelo link\n// público da Autentique, montado a partir do ID (nunca usa URL vinda do aviso).\nconst b = $json.body || $json;\nconst ev = b.event || {};\nif (ev.type !== 'document.finished') return [];\nconst d = ev.data || {};\nconst docId = String(d.id || '').replace(/[^A-Za-z0-9]/g, '');\nif (!docId) return [];\nconst name = String(d.name || '');\nif (!name) throw new Error('Aviso da Autentique sem nome do documento: ' + docId);\nconst signedUrl = 'https://api.autentique.com.br/documentos/' + docId + '/assinado.pdf';\nreturn [{ json: { docId, name, signedUrl, eventId: ev.id || null } }];"
+      }
+    },
+    {
+      "name": "Preparar busca no Drive",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        304
+      ],
+      "parameters": {
+        "jsCode": "const doc = { id: $json.docId, name: $json.name };\nconst signedUrl = $json.signedUrl;\n\n// Nome do documento na Autentique = nome da pasta da reunião (sem .pdf/.docx)\nconst nome = String(doc.name || '').replace(/[.](pdf|docx?)$/i, '').split(' ').filter(Boolean).join(' ').trim();\nconst m = nome.match(/[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}h[0-9]{2}/);\nconst chave = m ? m[0] : '';\nconst BS = String.fromCharCode(92);\nconst esc = s => String(s).split(BS).join(BS + BS).split(\"'\").join(BS + \"'\");\nconst SEM_PASTA = 'ATAs assinadas — sem pasta';\n\nconst conds = [\"name contains '\" + esc(nome) + \"'\", \"name = '\" + SEM_PASTA + \"'\"];\nif (chave) conds.push(\"name contains '\" + chave + \"'\");\nconst q = 'trashed = false and (' + conds.join(' or ') + ')';\n\nreturn [{ json: { docId: doc.id, nome, chave, signedUrl, semPastaNome: SEM_PASTA, q } }];"
+      }
+    },
+    {
+      "name": "Drive - procurar pasta da reunião",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        304
+      ],
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.q }}"
+            },
+            {
+              "name": "corpora",
+              "value": "drive"
+            },
+            {
+              "name": "driveId",
+              "value": "0AJW7LEhIfbLDUk9PVA"
+            },
+            {
+              "name": "includeItemsFromAllDrives",
+              "value": "true"
+            },
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name,mimeType,parents)"
+            },
+            {
+              "name": "pageSize",
+              "value": "200"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Escolher pasta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        304
+      ],
+      "parameters": {
+        "jsCode": "const p = $('Preparar busca no Drive').first().json;\nconst files = $json.files || [];\nconst BASE = '<ID>'; // Meus Documentos\nconst FOLDER = 'application/vnd.google-apps.folder';\nconst norm = s => String(s).normalize('NFC').replace(/[–—]/g, '-').split(' ').filter(Boolean).join(' ').toLowerCase();\n\n// 1º nome exato; senão, uma única pasta com a mesma data e hora de início\nconst pastas = files.filter(f => f.mimeType === FOLDER && f.name !== p.semPastaNome);\nlet pasta = pastas.find(f => norm(f.name) === norm(p.nome));\nif (!pasta && p.chave) {\n  const c = pastas.filter(f => f.name.startsWith(p.chave));\n  if (c.length === 1) pasta = c[0];\n}\n\nconst arquivo = (pasta ? pasta.name : p.nome) + ' — ATA ASSINADA.pdf';\n// Aviso repetido da Autentique: já salvo, não duplica\nif (files.some(f => f.mimeType !== FOLDER && f.name === arquivo)) return [];\n\nconst sem = files.find(f => f.mimeType === FOLDER && f.name === p.semPastaNome && (f.parents || []).includes(BASE));\nreturn [{ json: {\n  ...p,\n  encontrou: !!pasta,\n  pastaId: pasta ? pasta.id : null,\n  pastaNome: pasta ? pasta.name : null,\n  destinoId: pasta ? pasta.id : (sem ? sem.id : null),\n  arquivo\n} }];"
+      }
+    },
+    {
+      "name": "Drive - garantir pasta de destino",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        304
+      ],
+      "parameters": {
+        "method": "={{ $json.destinoId ? \"PATCH\" : \"POST\" }}",
+        "url": "={{ \"https://www.googleapis.com/drive/v3/files\" + ($json.destinoId ? \"/\" + $json.destinoId : \"\") }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.destinoId ? {} : { name: $json.semPastaNome, mimeType: \"application/vnd.google-apps.folder\", parents: [\"<ID>\"] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive - salvar ATA ASSINADA",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1920,
+        304
+      ],
+      "parameters": {
+        "name": "={{ $('Escolher pasta').item.json.arquivo }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DRIVEID>"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FOLDERID>"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Google Chat - avisar ATA assinada",
+      "type": "n8n-nodes-base.googleChat",
+      "typeVersion": 1,
+      "position": [
+        2160,
+        304
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "spaceId": "spaces/<SPACE_ID>",
+        "messageUi": {
+          "text": "={{ (() => { const p = $('Escolher pasta').item.json; const arq = '<GOOGLE_URL>' + $json.id + '/view'; return p.encontrou ? '✍️ *ATA assinada pelo cliente*\\n*' + p.pastaNome + '*\\n📄 <' + arq + '|Abrir ATA assinada>\\n📁 <<GOOGLE_URL>' + p.pastaId + '|Pasta da reunião>' : '⚠️ *ATA assinada, mas NÃO achei a pasta da reunião*\\nNome na Autentique: *' + p.nome + '*\\nO PDF foi salvo em “' + p.semPastaNome + '” (Meus Documentos): <' + arq + '|Abrir ATA assinada>\\nMova o arquivo para a pasta certa da reunião.'; })() }}"
+        },
+        "additionalFields": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Sticky Note 93d266e5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "content": "## Autentique → ATA ASSINADA no Drive (sem API/token)\n\n- Na Autentique, o webhook aponta para `/webhook/autentique-assinatura` com o evento **document.finished**.\n- O nome do documento na Autentique deve ser o **nome da pasta da reunião** (vem no aviso do Chat).\n- O PDF assinado é baixado do link público `api.autentique.com.br/documentos/<id>/assinado.pdf`.\n- Achou a pasta → salva `… — ATA ASSINADA.pdf` nela.\n- Não achou → salva em **Meus Documentos / ATAs assinadas — sem pasta** e avisa no Chat.\n- Aviso repetido não duplica o arquivo.",
+        "color": 5
+      }
+    },
+    {
+      "name": "Autentique - baixar PDF assinado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1680,
+        304
+      ],
+      "parameters": {
+        "url": "={{ $('Escolher pasta').item.json.signedUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Autentique - aviso de documento": {
+      "main": [
+        [
+          {
+            "node": "Ler aviso (só documento finalizado)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar busca no Drive": {
+      "main": [
+        [
+          {
+            "node": "Drive - procurar pasta da reunião",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - procurar pasta da reunião": {
+      "main": [
+        [
+          {
+            "node": "Escolher pasta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escolher pasta": {
+      "main": [
+        [
+          {
+            "node": "Drive - garantir pasta de destino",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - salvar ATA ASSINADA": {
+      "main": [
+        [
+          {
+            "node": "Google Chat - avisar ATA assinada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler aviso (só documento finalizado)": {
+      "main": [
+        [
+          {
+            "node": "Preparar busca no Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - garantir pasta de destino": {
+      "main": [
+        [
+          {
+            "node": "Autentique - baixar PDF assinado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Autentique - baixar PDF assinado": {
+      "main": [
+        [
+          {
+            "node": "Drive - salvar ATA ASSINADA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
